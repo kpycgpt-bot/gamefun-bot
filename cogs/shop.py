@@ -4,7 +4,6 @@ from database import db
 import config
 
 # --- НАСТРОЙКИ МАГАЗИНА ---
-# Формат: "Команда_для_покупки": {"price": Цена, "role_name": "Точное имя роли", "desc": "Описание"}
 SHOP_ITEMS = {
     "vip": {
         "price": 500,
@@ -30,16 +29,21 @@ class Shop(commands.Cog):
     @commands.command(name="shop")
     async def show_shop(self, ctx):
         """Показывает витрину магазина."""
+        user_balance = db.get_user(ctx.author.id)['coins']
+        
         embed = discord.Embed(
             title="🛒 МАГАЗИН РОЛЕЙ",
-            description=f"Твой баланс: **{db.get_user(ctx.author.id)['coins']} 💰**\nИспользуй `!buy <название>` для покупки.",
+            description=f"# 💰 Твой баланс: {user_balance}\n\n👇 **КАК КУПИТЬ?**\nПиши команду: `!buy код`\nНапример: `!buy vip`",
             color=discord.Color.gold()
         )
 
         for item_key, info in SHOP_ITEMS.items():
+            # Мы используем '###' чтобы сделать текст КРУПНЫМ (Заголовок 3 уровня)
+            price_text = f"### 💸 Цена: {info['price']} монет"
+            
             embed.add_field(
-                name=f"{info['role_name']}",
-                value=f"🏷️ Код: `{item_key}`\n💰 Цена: **{info['price']}**\n📜 {info['desc']}",
+                name=f"🏷️ ТОВАР: {info['role_name']}",
+                value=f"{price_text}\n**Код для покупки:** `{item_key}`\n📜 *{info['desc']}*\n----------------",
                 inline=False
             )
         
@@ -49,11 +53,11 @@ class Shop(commands.Cog):
     async def buy_item(self, ctx, item_code: str = None):
         """Покупка товара."""
         if not item_code:
-            return await ctx.send("❌ Укажите код товара! Например: `!buy vip`")
+            return await ctx.send("❌ **Ошибка!** Пиши так: `!buy vip` (или другой код из магазина).")
 
         item_code = item_code.lower()
         if item_code not in SHOP_ITEMS:
-            return await ctx.send("❌ Такого товара нет в магазине.")
+            return await ctx.send("❌ Такого товара нет в магазине. Проверь команду `!shop`")
 
         item = SHOP_ITEMS[item_code]
         price = item["price"]
@@ -62,25 +66,24 @@ class Shop(commands.Cog):
         # 1. Проверка баланса
         user_data = db.get_user(ctx.author.id)
         if user_data["coins"] < price:
-            return await ctx.send(f"❌ Недостаточно средств! Нужно: {price}, у тебя: {user_data['coins']}.")
+            return await ctx.send(f"❌ **Не хватает денег!**\nНужно: {price} 💰\nУ тебя: {user_data['coins']} 💰")
 
-        # 2. Проверка роли (есть ли она уже?)
+        # 2. Проверка роли
         role = discord.utils.get(ctx.guild.roles, name=role_name)
         if not role:
-            return await ctx.send(f"⚠️ Ошибка: Роль '{role_name}' не найдена на сервере. Зови админа!")
+            return await ctx.send(f"⚠️ Ошибка админа: Роль '{role_name}' не создана на сервере!")
         
         if role in ctx.author.roles:
             return await ctx.send("❌ У тебя уже есть эта роль!")
 
-        # 3. Покупка (Списание денег + Выдача роли)
+        # 3. Покупка
         try:
-            # Списываем монеты (добавляем отрицательную сумму)
             db.add_coins(ctx.author.id, -price)
             await ctx.author.add_roles(role)
             
             embed = discord.Embed(
                 title="🛍️ Успешная покупка!",
-                description=f"Ты купил роль **{role.mention}** за **{price}** монет.",
+                description=f"# ✅ ТЫ КУПИЛ РОЛЬ!\nТы потратил **{price}** монет и получил: **{role.mention}**",
                 color=discord.Color.green()
             )
             await ctx.send(embed=embed)
