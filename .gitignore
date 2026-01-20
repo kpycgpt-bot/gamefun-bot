@@ -1,0 +1,9 @@
+﻿venv/
+__pycache__/
+*.pyc
+config.py
+.env
+*.rar
+*.zip
+*.exe
+music/ffmpeg*
