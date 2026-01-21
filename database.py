@@ -1,79 +1,72 @@
-﻿import json
+﻿import sqlite3
 import os
 
+DB_NAME = "database.db"
+
 class Database:
-    def __init__(self, db_file="players.json"):
-        self.db_file = db_file
-        self.players = self.load()
+    def __init__(self):
+        self.conn = sqlite3.connect(DB_NAME)
+        self.cursor = self.conn.cursor()
+        self.create_tables()
 
-    def load(self):
-        if not os.path.exists(self.db_file):
-            return {}
-        try:
-            with open(self.db_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, ValueError):
-            return {}
-
-    def save(self):
-        with open(self.db_file, "w", encoding="utf-8") as f:
-            json.dump(self.players, f, indent=4, ensure_ascii=False)
-
-    def get_user(self, uid: int):
-        uid = str(uid)
-        # Если "all_members" случайно попал в ключи юзеров, игнорируем его при поиске конкретного юзера
-        if uid not in self.players:
-            self.players[uid] = {
-                "xp": 0,
-                "level": 1,
-                "coins": 0,
-                "invites": 0,
-                "invited_list": []
-            }
-            self.save()
-        return self.players[uid]
-
-    def add_referral(self, inviter_id: int, joined_id: int):
-        """Добавляет приглашение, если человек зашел впервые."""
-        inviter = self.get_user(inviter_id)
-        joined_id_str = str(joined_id)
-
-        # Системный ключ для хранения всех, кто когда-либо заходил
-        if "all_members" not in self.players:
-            self.players["all_members"] = []
-
-        if joined_id_str not in self.players["all_members"]:
-            inviter["invites"] += 1
-            inviter["invited_list"].append(joined_id_str)
-            self.players["all_members"].append(joined_id_str)
-            self.save()
-            return True 
-        return False
-
-    # --- НОВЫЕ ФУНКЦИИ (ИСПРАВЛЕНИЕ ОШИБКИ) ---
-    def add_xp(self, uid: int, amount: int):
-        """Добавляет опыт и обрабатывает повышение уровня."""
-        user = self.get_user(uid)
-        user["xp"] += amount
+    def create_tables(self):
+        # Таблица пользователей
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                xp INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1,
+                coins INTEGER DEFAULT 0
+            )
+        """)
         
-        # Формула: каждые 500 XP = новый уровень
-        new_level = 1 + (user["xp"] // 500)
-        
-        leveled_up = False
-        if new_level > user["level"]:
-            user["level"] = new_level
-            leveled_up = True
-            
-        self.save()
-        # Возвращаем данные + флаг, повысился ли уровень
-        return {**user, "leveled_up": leveled_up}
+        # --- ТАБЛИЦА ВАРНОВ (Новая) ---
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS warns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                admin_id INTEGER,
+                reason TEXT,
+                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self.conn.commit()
 
-    def add_coins(self, uid: int, amount: int):
-        """Начисляет монеты."""
-        user = self.get_user(uid)
-        user["coins"] += amount
-        self.save()
-        return user
+    def get_user(self, user_id):
+        self.cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user = self.cursor.fetchone()
+        if not user:
+            self.cursor.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
+            self.conn.commit()
+            return {"xp": 0, "level": 1, "coins": 0}
+        return {"xp": user[1], "level": user[2], "coins": user[3]}
 
-# Создаем единственный экземпляр БД
+    def update_user(self, user_id, xp=None, level=None, coins=None):
+        if xp is not None:
+            self.cursor.execute("UPDATE users SET xp = ? WHERE user_id = ?", (xp, user_id))
+        if level is not None:
+            self.cursor.execute("UPDATE users SET level = ? WHERE user_id = ?", (level, user_id))
+        if coins is not None:
+            self.cursor.execute("UPDATE users SET coins = ? WHERE user_id = ?", (coins, user_id))
+        self.conn.commit()
+
+    def add_coins(self, user_id, amount):
+        user = self.get_user(user_id)
+        new_balance = user['coins'] + amount
+        self.update_user(user_id, coins=new_balance)
+
+    # --- ФУНКЦИИ ВАРНОВ ---
+    def add_warn(self, user_id, admin_id, reason):
+        self.cursor.execute("INSERT INTO warns (user_id, admin_id, reason) VALUES (?, ?, ?)", 
+                            (user_id, admin_id, reason))
+        self.conn.commit()
+
+    def get_warns(self, user_id):
+        self.cursor.execute("SELECT admin_id, reason, date FROM warns WHERE user_id = ?", (user_id,))
+        return self.cursor.fetchall()
+
+    def remove_warns(self, user_id):
+        self.cursor.execute("DELETE FROM warns WHERE user_id = ?", (user_id,))
+        self.conn.commit()
+
 db = Database()
