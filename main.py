@@ -1,41 +1,41 @@
 ﻿import discord
 from discord.ext import commands
-import asyncio
-import os
 import config
+import os
+import asyncio
 
-# Настройка интентов (прав доступа бота)
-intents = discord.Intents.all()
+# Настройка намерений (Intents)
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
-bot = commands.Bot(
-    command_prefix=config.PREFIX,
-    intents=intents,
-    help_command=None # Полностью отключаем стандартный help
-)
+class GameFunBot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            command_prefix=config.PREFIX,
+            intents=intents,
+            help_command=None # Отключаем стандартный help, сделаем свой красивый
+        )
 
-@bot.event
-async def on_ready():
-    print(f"✅ Бот {bot.user} успешно запущен!")
-    print(f"📡 Префикс: {config.PREFIX}")
-    await bot.change_presence(activity=discord.Game("GameFun Realms"))
+    async def setup_hook(self):
+        """Эта функция запускается ДО того, как бот выйдет в онлайн"""
+        print("🔄 --- ЗАГРУЗКА МОДУЛЕЙ ---")
+        # Сканируем папку cogs
+        for filename in os.listdir('./cogs'):
+            if filename.endswith('.py'):
+                try:
+                    await self.load_extension(f'cogs.{filename[:-3]}')
+                    print(f"✅ Модуль загружен: {filename}")
+                except Exception as e:
+                    print(f"❌ ОШИБКА в модуле {filename}: {e}")
+        print("---------------------------")
 
-async def load_extensions():
-    """Автоматическая загрузка всех модулей из папки cogs."""
-    for filename in os.listdir("./cogs"):
-        if filename.endswith(".py"):
-            try:
-                await bot.load_extension(f"cogs.{filename[:-3]}")
-                print(f"[+] Загружен модуль: {filename}")
-            except Exception as e:
-                print(f"[!] Ошибка загрузки {filename}: {e}")
+    async def on_ready(self):
+        print(f'🚀 Бот {self.user} запущен и готов к работе!')
+        print(f'ID: {self.user.id}')
+        await self.change_presence(activity=discord.Game(name="!help | GameFun"))
 
-async def main():
-    async with bot:
-        await load_extensions()
-        await bot.start(config.TOKEN)
+bot = GameFunBot()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("🛑 Бот остановлен.")
+    bot.run(config.TOKEN)
