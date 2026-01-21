@@ -1,70 +1,69 @@
 import discord
 from discord.ext import commands
 
+# Настройка кнопок и ролей
+# Формат: "custom_id": {"name": "Имя Роли", "emoji": "Эмодзи", "style": ЦветКнопки}
+ROLES_CONFIG = {
+    "role_rpg":     {"name": "RPG",     "emoji": "🗡️", "style": discord.ButtonStyle.primary},
+    "role_mmo":     {"name": "MMO",     "emoji": "🛡️", "style": discord.ButtonStyle.success},
+    "role_shooter": {"name": "Shooter", "emoji": "🎯", "style": discord.ButtonStyle.primary},
+    "role_moba":    {"name": "MOBA",    "emoji": "⚡", "style": discord.ButtonStyle.danger},
+    "role_rts":     {"name": "RTS",     "emoji": "🏰", "style": discord.ButtonStyle.secondary},
+}
+
+class RoleButton(discord.ui.Button):
+    def __init__(self, role_key, data):
+        super().__init__(
+            style=data["style"],
+            label=data["name"],
+            emoji=data["emoji"],
+            custom_id=role_key, # ВАЖНО: ID кнопки должен быть постоянным
+            row=0 if list(ROLES_CONFIG.keys()).index(role_key) < 3 else 1 # Красивая расстановка
+        )
+        self.role_name = data["name"]
+
+    async def callback(self, interaction: discord.Interaction):
+        # Эта функция срабатывает при нажатии
+        role = discord.utils.get(interaction.guild.roles, name=self.role_name)
+        
+        if not role:
+            return await interaction.response.send_message(f"❌ Админ забыл создать роль **{self.role_name}**!", ephemeral=True)
+
+        user = interaction.user
+        if role in user.roles:
+            await user.remove_roles(role)
+            await interaction.response.send_message(f"❌ Роль **{self.role_name}** убрана.", ephemeral=True)
+        else:
+            await user.add_roles(role)
+            await interaction.response.send_message(f"✅ Роль **{self.role_name}** выдана!", ephemeral=True)
+
 class RolesView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
-
-    # --- ЛОГИКА ВЫДАЧИ ---
-    async def toggle_role(self, interaction, role_name):
-        role = discord.utils.get(interaction.guild.roles, name=role_name)
-        if not role:
-            return await interaction.response.send_message(f"❌ Роль '{role_name}' не найдена! Проверь настройки сервера.", ephemeral=True)
-        
-        try:
-            if role in interaction.user.roles:
-                await interaction.user.remove_roles(role)
-                await interaction.response.send_message(f"🗑️ Роль **{role_name}** убрана.", ephemeral=True)
-            else:
-                await interaction.user.add_roles(role)
-                await interaction.response.send_message(f"✅ Роль **{role_name}** выдана!", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ У бота нет прав (подними роль бота выше роли игры!).", ephemeral=True)
-
-    # --- КНОПКИ ---
-    
-    @discord.ui.button(label="RPG", emoji="🗡️", style=discord.ButtonStyle.primary, custom_id="btn_rpg")
-    async def rpg_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "🗡️ Герой Меча (RPG)")
-
-    @discord.ui.button(label="MMO", emoji="🎒", style=discord.ButtonStyle.success, custom_id="btn_mmo")
-    async def mmo_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "🎒 Странник Миров (MMO)")
-
-    @discord.ui.button(label="Shooter", emoji="🎯", style=discord.ButtonStyle.primary, custom_id="btn_shooter")
-    async def shooter_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "🎯 Меткий Стрелок (Shooter)")
-
-    @discord.ui.button(label="MOBA", emoji="⚡", style=discord.ButtonStyle.danger, custom_id="btn_moba")
-    async def moba_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "⚡ Воин Арены (MOBA)")
-
-    @discord.ui.button(label="RTS", emoji="♟️", style=discord.ButtonStyle.secondary, custom_id="btn_rts")
-    async def rts_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "♟️ Тактик Реалма (RTS)")
-
-    @discord.ui.button(label="CCG (Карты)", emoji="🃏", style=discord.ButtonStyle.secondary, custom_id="btn_ccg")
-    async def ccg_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "🃏 Мастер Колоды (CCG)")
-    
-    @discord.ui.button(label="Sandbox", emoji="🧱", style=discord.ButtonStyle.primary, custom_id="btn_sandbox")
-    async def sandbox_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.toggle_role(interaction, "🧱 Созидатель Реалма")
+        super().__init__(timeout=None) # ВАЖНО: timeout=None делает кнопки вечными
+        # Создаем кнопки из конфига
+        for key, data in ROLES_CONFIG.items():
+            self.add_item(RoleButton(key, data))
 
 class RolesPanel(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # 🔥 САМОЕ ГЛАВНОЕ: Регистрируем кнопки при запуске бота
+        # Без этого после перезагрузки кнопки перестанут работать
+        self.bot.add_view(RolesView())
 
-    @commands.command(name="rolespanel")
+    @commands.command(name="rolemenu")
     @commands.has_permissions(administrator=True)
-    async def send_roles_panel(self, ctx):
+    async def send_panel(self, ctx):
+        """Отправляет панель выбора ролей."""
+        await ctx.message.delete()
+        
         embed = discord.Embed(
             title="🎭 ВЫБОР ИГРОВЫХ ИНТЕРЕСОВ",
-            description="Нажми на кнопку, чтобы открыть доступ к категории!\nПовторное нажатие уберет роль.",
-            color=0x9B59B6
+            description="Нажми на кнопку, чтобы получить доступ к категории!\nПовторное нажатие уберет роль.",
+            color=discord.Color.dark_theme()
         )
+        # Отправляем сообщение с нашей вечной View
         await ctx.send(embed=embed, view=RolesView())
-        await ctx.message.delete()
 
 async def setup(bot):
     await bot.add_cog(RolesPanel(bot))
