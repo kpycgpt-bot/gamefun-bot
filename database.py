@@ -11,7 +11,7 @@ class Database:
         self.create_tables()
 
     def create_tables(self):
-        # Таблица пользователей
+        # Юзеры
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -21,7 +21,7 @@ class Database:
                 invites INTEGER DEFAULT 0
             )
         """)
-        # Таблица инвентаря
+        # Инвентарь
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
                 user_id INTEGER,
@@ -30,7 +30,7 @@ class Database:
                 PRIMARY KEY (user_id, item_id)
             )
         """)
-        # Таблица варнов
+        # Варны
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS warns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +40,7 @@ class Database:
                 date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # --- 🔥 ТАБЛИЦА ИВЕНТОВ (СУНДУКИ) ---
+        # Ивенты
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS active_events (
                 message_id INTEGER PRIMARY KEY,
@@ -72,6 +72,12 @@ class Database:
         user = self.get_user(user_id)
         self.update_user(user_id, coins=user['coins'] + amount)
 
+    # 🔥 НОВЫЙ МЕТОД: ТОП ИГРОКОВ 🔥
+    def get_top_users(self, limit=10):
+        # Сортируем: Сначала по Уровню (убывание), потом по XP (убывание)
+        self.cursor.execute("SELECT user_id, level, xp FROM users ORDER BY level DESC, xp DESC LIMIT ?", (limit,))
+        return self.cursor.fetchall()
+
     # --- ИНВЕНТАРЬ ---
     def add_item(self, user_id, item_id, amount=1):
         self.cursor.execute("SELECT count FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id))
@@ -98,14 +104,13 @@ class Database:
         self.cursor.execute("SELECT item_id, count FROM inventory WHERE user_id = ?", (user_id,))
         return self.cursor.fetchall()
 
-    # --- РЕФЕРАЛЫ ---
+    # --- ДРУГОЕ ---
     def add_referral(self, inviter_id, new_user_id):
         user = self.get_user(inviter_id)
         self.cursor.execute("UPDATE users SET invites = ? WHERE user_id = ?", (user['invites'] + 1, inviter_id))
         self.conn.commit()
         return True
 
-    # --- ВАРНЫ ---
     def add_warn(self, user_id, admin_id, reason):
         self.cursor.execute("INSERT INTO warns (user_id, admin_id, reason) VALUES (?, ?, ?)", (user_id, admin_id, reason))
         self.conn.commit()
@@ -116,21 +121,17 @@ class Database:
         self.cursor.execute("DELETE FROM warns WHERE user_id = ?", (user_id,))
         self.conn.commit()
 
-    # --- 🔥 МЕТОДЫ ИВЕНТОВ (БЕЗ НИХ ВСЁ СЛОМАЕТСЯ) ---
+    # --- ИВЕНТЫ ---
     def create_event(self, message_id, channel_id, reward, required):
-        self.cursor.execute("INSERT INTO active_events VALUES (?, ?, ?, ?, ?)", 
-                            (message_id, channel_id, reward, required, "[]"))
+        self.cursor.execute("INSERT INTO active_events VALUES (?, ?, ?, ?, ?)", (message_id, channel_id, reward, required, "[]"))
         self.conn.commit()
-
     def get_event(self, message_id):
         self.cursor.execute("SELECT * FROM active_events WHERE message_id = ?", (message_id,))
         return self.cursor.fetchone()
-
     def update_event_users(self, message_id, users_list):
         users_json = json.dumps(users_list)
         self.cursor.execute("UPDATE active_events SET users_list = ? WHERE message_id = ?", (users_json, message_id))
         self.conn.commit()
-
     def delete_event(self, message_id):
         self.cursor.execute("DELETE FROM active_events WHERE message_id = ?", (message_id,))
         self.conn.commit()
