@@ -2,8 +2,9 @@ import discord
 from discord.ext import commands
 
 # --- НАСТРОЙКИ ---
-# "button_label": Текст на кнопке
-# "role_name":    ТОЧНОЕ название роли в настройках сервера (с мечами и смайликами)
+# Мы берем ТОЧНЫЕ названия из твоего списка.
+# На кнопке пишем коротко (button_label), а ищем длинное (role_name).
+
 ROLES_CONFIG = {
     "role_rpg": {
         "button_label": "RPG", 
@@ -41,6 +42,12 @@ ROLES_CONFIG = {
         "emoji": "🃏", 
         "style": discord.ButtonStyle.secondary
     },
+    "role_platformer": {
+        "button_label": "Platformer", 
+        "role_name": "🦘 Прыгучий Платформер", 
+        "emoji": "🦘", 
+        "style": discord.ButtonStyle.secondary
+    },
     "role_sandbox": {
         "button_label": "Sandbox", 
         "role_name": "🧱 Созидатель Реалма", 
@@ -53,22 +60,21 @@ class RoleButton(discord.ui.Button):
     def __init__(self, role_key, data):
         super().__init__(
             style=data["style"],
-            label=data["button_label"], # На кнопке пишем коротко
+            label=data["button_label"],
             emoji=data["emoji"],
             custom_id=role_key,
-            # Расставляем красиво: первые 4 кнопки в ряд 0, остальные в ряд 1
+            # Первые 4 кнопки в ряд 0, вторые 4 кнопки в ряд 1
             row=0 if list(ROLES_CONFIG.keys()).index(role_key) < 4 else 1 
         )
-        self.role_to_give = data["role_name"] # А ищем длинное название
+        self.role_to_give = data["role_name"]
 
     async def callback(self, interaction: discord.Interaction):
-        # Ищем роль по красивому имени с мечом
+        # Ищем роль по ТОЧНОМУ названию
         role = discord.utils.get(interaction.guild.roles, name=self.role_to_give)
         
         if not role:
-            # Если роль не найдена, подсказываем админу, как она должна называться
             return await interaction.response.send_message(
-                f"❌ ОШИБКА: Я не нашел роль `{self.role_to_give}`!\nПроверь, что она создана на сервере буква в букву.", 
+                f"❌ **ОШИБКА КОНФИГА:**\nЯ пытался найти роль `{self.role_to_give}`, но её нет на сервере.\nПроверь, не удалил ли ты её?", 
                 ephemeral=True
             )
 
@@ -89,7 +95,7 @@ class RolesView(discord.ui.View):
 class RolesPanel(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Восстанавливаем кнопки при запуске
+        # 🔥 ВОССТАНАВЛИВАЕМ КНОПКИ ПРИ ЗАПУСКЕ 🔥
         self.bot.add_view(RolesView())
 
     @commands.command(name="rolemenu")
@@ -101,6 +107,7 @@ class RolesPanel(commands.Cog):
             description="Нажми на кнопку, чтобы открыть доступ к категории!\nПовторное нажатие уберет роль.",
             color=0x9B59B6
         )
+        # Отправляем сообщение с кнопками
         await ctx.send(embed=embed, view=RolesView())
 
 async def setup(bot):
