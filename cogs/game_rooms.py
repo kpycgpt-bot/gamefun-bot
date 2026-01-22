@@ -9,11 +9,48 @@ class AddUserSelectView(discord.ui.View):
         self.channel = channel
 
     @discord.ui.select(cls=discord.ui.UserSelect, placeholder="🔍 Выбери друга для добавления...", min_values=1, max_values=1)
-    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
-        member = select.values[0]
-        # Выдаем права: Видеть канал + Писать сообщения
-        await self.channel.set_permissions(member, view_channel=True, send_messages=True)
-        await interaction.response.edit_message(content=f"✅ **{member.display_name}** добавлен в базу!", view=None)
+async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        user = interaction.user
+        
+        # --- 🛡️ ПРОВЕРКА ЛИМИТОВ (НОВОЕ) ---
+        category = discord.utils.get(guild.categories, name="🎮 Игровые Миры")
+        
+        if category:
+            # Считаем, сколько каналов уже создал этот юзер
+            # Ищем каналы, которые начинаются с "🔒┃база-" и где юзер имеет права управления
+            user_rooms = 0
+            for channel in category.text_channels:
+                if channel.permissions_for(user).manage_channels and channel.name.startswith("🔒┃база-"):
+                    user_rooms += 1
+            
+            if user_rooms >= 1: # ЛИМИТ: 1 комната на человека
+                return await interaction.response.send_message(
+                    "❌ **Лимит достигнут!**\nУ тебя уже есть активная база. Удали старую, чтобы создать новую.", 
+                    ephemeral=True
+                )
+        # -----------------------------------
+
+        if not category:
+            category = await guild.create_category("🎮 Игровые Миры")
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            user: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_messages=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, manage_channels=True)
+        }
+
+        channel_name = f"🔒┃база-{user.display_name}"
+        channel = await category.create_text_channel(name=channel_name, overwrites=overwrites)
+
+        await interaction.response.send_message(f"✅ Комната создана: {channel.mention}", ephemeral=True)
+
+        embed = discord.Embed(
+            title=f"База данных: {user.display_name}",
+            description="**Управление доступом:**\nИспользуй кнопки ниже, чтобы добавить или выгнать друзей.",
+            color=0x2ECC71
+        )
+        await channel.send(f"{user.mention}, твоя комната готова!", embed=embed, view=RoomControlsView(user.id))
 
 # --- 2. МЕНЮ ДЛЯ КИКА (НОВОЕ) ---
 class KickUserSelectView(discord.ui.View):
