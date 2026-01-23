@@ -3,6 +3,7 @@ from discord.ext import commands
 import config
 import os
 import asyncio
+from database import db  # Импортируем нашу новую БД
 
 # Настройка намерений (Intents)
 intents = discord.Intents.default()
@@ -14,13 +15,18 @@ class GameFunBot(commands.Bot):
         super().__init__(
             command_prefix=config.PREFIX,
             intents=intents,
-            help_command=None # Отключаем стандартный help, сделаем свой красивый
+            help_command=None
         )
 
     async def setup_hook(self):
         """Эта функция запускается ДО того, как бот выйдет в онлайн"""
+        print("🔄 --- ЗАГРУЗКА СИСТЕМ ---")
+        
+        # 1. Подключаемся к базе данных
+        await db.connect()
+        
+        # 2. Сканируем папку cogs
         print("🔄 --- ЗАГРУЗКА МОДУЛЕЙ ---")
-        # Сканируем папку cogs
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
                 try:
@@ -30,6 +36,11 @@ class GameFunBot(commands.Bot):
                     print(f"❌ ОШИБКА в модуле {filename}: {e}")
         print("---------------------------")
 
+    async def close(self):
+        """При выключении бота закрываем соединение с БД"""
+        await db.close()
+        await super().close()
+
     async def on_ready(self):
         print(f'🚀 Бот {self.user} запущен и готов к работе!')
         print(f'ID: {self.user.id}')
@@ -38,4 +49,5 @@ class GameFunBot(commands.Bot):
 bot = GameFunBot()
 
 if __name__ == "__main__":
+    # [cite_start]Загружаем токен из config (который теперь берет его из .env) [cite: 1]
     bot.run(config.TOKEN)

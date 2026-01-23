@@ -1,4 +1,4 @@
-﻿import sqlite3
+﻿import aiosqlite
 import json
 import os
 
@@ -6,13 +6,19 @@ DB_NAME = "database.db"
 
 class Database:
     def __init__(self):
-        self.conn = sqlite3.connect(DB_NAME)
-        self.cursor = self.conn.cursor()
-        self.create_tables()
+        self.conn = None
 
-    def create_tables(self):
+    async def connect(self):
+        """Создает подключение к БД и таблицы, если их нет."""
+        self.conn = await aiosqlite.connect(DB_NAME)
+        # Позволяет обращаться к полям по имени (row['xp']), а не по индексу (row[1])
+        self.conn.row_factory = aiosqlite.Row 
+        await self.create_tables()
+        print("✅ [Database] Подключение к базе данных успешно!")
+
+    async def create_tables(self):
         # Юзеры
-        self.cursor.execute("""
+        await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 xp INTEGER DEFAULT 0,
@@ -22,7 +28,7 @@ class Database:
             )
         """)
         # Инвентарь
-        self.cursor.execute("""
+        await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
                 user_id INTEGER,
                 item_id TEXT,
@@ -31,7 +37,7 @@ class Database:
             )
         """)
         # Варны
-        self.cursor.execute("""
+        await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS warns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -41,7 +47,7 @@ class Database:
             )
         """)
         # Ивенты
-        self.cursor.execute("""
+        await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS active_events (
                 message_id INTEGER PRIMARY KEY,
                 channel_id INTEGER,
@@ -50,90 +56,108 @@ class Database:
                 users_list TEXT
             )
         """)
-        self.conn.commit()
+        await self.conn.commit()
+
+    async def close(self):
+        if self.conn:
+            await self.conn.close()
 
     # --- ЮЗЕРЫ ---
-    def get_user(self, user_id):
-        self.cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        user = self.cursor.fetchone()
-        if not user:
-            self.cursor.execute("INSERT INTO users (user_id, invites) VALUES (?, 0)", (user_id,))
-            self.conn.commit()
-            return {"xp": 0, "level": 1, "coins": 0, "invites": 0}
-        return {"xp": user[1], "level": user[2], "coins": user[3], "invites": user[4]}
+    async def get_user(self, user_id):
+        async with self.conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            user = await cursor.fetchone()
+            if not user:
+                await self.conn.execute("INSERT INTO users (user_id, invites) VALUES (?, 0)", (user_id,))
+                await self.conn.commit()
+                return {"xp": 0, "level": 1, "coins": 0, "invites": 0}
+            return dict(user) # Превращаем объект Row в обычный словарь
 
-    def update_user(self, user_id, xp=None, level=None, coins=None):
-        if xp is not None: self.cursor.execute("UPDATE users SET xp = ? WHERE user_id = ?", (xp, user_id))
-        if level is not None: self.cursor.execute("UPDATE users SET level = ? WHERE user_id = ?", (level, user_id))
-        if coins is not None: self.cursor.execute("UPDATE users SET coins = ? WHERE user_id = ?", (coins, user_id))
-        self.conn.commit()
+    async def update_user(self, user_id, xp=None, level=None, coins=None):
+        if xp is not None:
+            await self.conn.execute("UPDATE users SET xp = ? WHERE user_id = ?", (xp, user_id))
+        if level is not None:
+            await self.conn.execute("UPDATE users SET level = ? WHERE user_id = ?", (level, user_id))
+        if coins is not None:
+            await self.conn.execute("UPDATE users SET coins = ? WHERE user_id = ?", (coins, user_id))
+        await self.conn.commit()
 
-    def add_coins(self, user_id, amount):
-        user = self.get_user(user_id)
-        self.update_user(user_id, coins=user['coins'] + amount)
+    async def add_coins(self, user_id, amount):
+        user = await self.get_user(user_id)
+        await self.update_user(user_id, coins=user['coins'] + amount)
+    
+    async def add_xp(self, user_id, amount):
+        user = await self.get_user(user_id)
+        await self.update_user(user_id, xp=user['xp'] + amount)
 
-    # 🔥 НОВЫЙ МЕТОД: ТОП ИГРОКОВ 🔥
-    def get_top_users(self, limit=10):
-        # Сортируем: Сначала по Уровню (убывание), потом по XP (убывание)
-        self.cursor.execute("SELECT user_id, level, xp FROM users ORDER BY level DESC, xp DESC LIMIT ?", (limit,))
-        return self.cursor.fetchall()
+    # 🔥 ТОП ИГРОКОВ
+    async def get_top_users(self, limit=10):
+        async with self.conn.execute("SELECT user_id, level, xp FROM users ORDER BY level DESC, xp DESC LIMIT ?", (limit,)) as cursor:
+            return await cursor.fetchall()
 
     # --- ИНВЕНТАРЬ ---
-    def add_item(self, user_id, item_id, amount=1):
-        self.cursor.execute("SELECT count FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id))
-        result = self.cursor.fetchone()
-        if result:
-            self.cursor.execute("UPDATE inventory SET count = ? WHERE user_id = ? AND item_id = ?", (result[0] + amount, user_id, item_id))
-        else:
-            self.cursor.execute("INSERT INTO inventory (user_id, item_id, count) VALUES (?, ?, ?)", (user_id, item_id, amount))
-        self.conn.commit()
+    async def add_item(self, user_id, item_id, amount=1):
+        async with self.conn.execute("SELECT count FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id)) as cursor:
+            result = await cursor.fetchone()
+            if result:
+                await self.conn.execute("UPDATE inventory SET count = ? WHERE user_id = ? AND item_id = ?", (result['count'] + amount, user_id, item_id))
+            else:
+                await self.conn.execute("INSERT INTO inventory (user_id, item_id, count) VALUES (?, ?, ?)", (user_id, item_id, amount))
+            await self.conn.commit()
 
-    def remove_item(self, user_id, item_id, amount=1):
-        self.cursor.execute("SELECT count FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id))
-        result = self.cursor.fetchone()
-        if not result or result[0] < amount: return False
-        new_count = result[0] - amount
-        if new_count > 0:
-            self.cursor.execute("UPDATE inventory SET count = ? WHERE user_id = ? AND item_id = ?", (new_count, user_id, item_id))
-        else:
-            self.cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id))
-        self.conn.commit()
-        return True
-    
-    def get_inventory(self, user_id):
-        self.cursor.execute("SELECT item_id, count FROM inventory WHERE user_id = ?", (user_id,))
-        return self.cursor.fetchall()
+    async def remove_item(self, user_id, item_id, amount=1):
+        async with self.conn.execute("SELECT count FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id)) as cursor:
+            result = await cursor.fetchone()
+            if not result or result['count'] < amount:
+                return False
+            
+            new_count = result['count'] - amount
+            if new_count > 0:
+                await self.conn.execute("UPDATE inventory SET count = ? WHERE user_id = ? AND item_id = ?", (new_count, user_id, item_id))
+            else:
+                await self.conn.execute("DELETE FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id))
+            await self.conn.commit()
+            return True
+
+    async def get_inventory(self, user_id):
+        async with self.conn.execute("SELECT item_id, count FROM inventory WHERE user_id = ?", (user_id,)) as cursor:
+            return await cursor.fetchall()
 
     # --- ДРУГОЕ ---
-    def add_referral(self, inviter_id, new_user_id):
-        user = self.get_user(inviter_id)
-        self.cursor.execute("UPDATE users SET invites = ? WHERE user_id = ?", (user['invites'] + 1, inviter_id))
-        self.conn.commit()
+    async def add_referral(self, inviter_id, new_user_id):
+        user = await self.get_user(inviter_id)
+        await self.conn.execute("UPDATE users SET invites = ? WHERE user_id = ?", (user['invites'] + 1, inviter_id))
+        await self.conn.commit()
         return True
 
-    def add_warn(self, user_id, admin_id, reason):
-        self.cursor.execute("INSERT INTO warns (user_id, admin_id, reason) VALUES (?, ?, ?)", (user_id, admin_id, reason))
-        self.conn.commit()
-    def get_warns(self, user_id):
-        self.cursor.execute("SELECT admin_id, reason, date FROM warns WHERE user_id = ?", (user_id,))
-        return self.cursor.fetchall()
-    def remove_warns(self, user_id):
-        self.cursor.execute("DELETE FROM warns WHERE user_id = ?", (user_id,))
-        self.conn.commit()
+    async def add_warn(self, user_id, admin_id, reason):
+        await self.conn.execute("INSERT INTO warns (user_id, admin_id, reason) VALUES (?, ?, ?)", (user_id, admin_id, reason))
+        await self.conn.commit()
+
+    async def get_warns(self, user_id):
+        async with self.conn.execute("SELECT admin_id, reason, date FROM warns WHERE user_id = ?", (user_id,)) as cursor:
+            return await cursor.fetchall()
+
+    async def remove_warns(self, user_id):
+        await self.conn.execute("DELETE FROM warns WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
 
     # --- ИВЕНТЫ ---
-    def create_event(self, message_id, channel_id, reward, required):
-        self.cursor.execute("INSERT INTO active_events VALUES (?, ?, ?, ?, ?)", (message_id, channel_id, reward, required, "[]"))
-        self.conn.commit()
-    def get_event(self, message_id):
-        self.cursor.execute("SELECT * FROM active_events WHERE message_id = ?", (message_id,))
-        return self.cursor.fetchone()
-    def update_event_users(self, message_id, users_list):
-        users_json = json.dumps(users_list)
-        self.cursor.execute("UPDATE active_events SET users_list = ? WHERE message_id = ?", (users_json, message_id))
-        self.conn.commit()
-    def delete_event(self, message_id):
-        self.cursor.execute("DELETE FROM active_events WHERE message_id = ?", (message_id,))
-        self.conn.commit()
+    async def create_event(self, message_id, channel_id, reward, required):
+        await self.conn.execute("INSERT INTO active_events VALUES (?, ?, ?, ?, ?)", (message_id, channel_id, reward, required, "[]"))
+        await self.conn.commit()
 
+    async def get_event(self, message_id):
+        async with self.conn.execute("SELECT * FROM active_events WHERE message_id = ?", (message_id,)) as cursor:
+            return await cursor.fetchone()
+
+    async def update_event_users(self, message_id, users_list):
+        users_json = json.dumps(users_list)
+        await self.conn.execute("UPDATE active_events SET users_list = ? WHERE message_id = ?", (users_json, message_id))
+        await self.conn.commit()
+
+    async def delete_event(self, message_id):
+        await self.conn.execute("DELETE FROM active_events WHERE message_id = ?", (message_id,))
+        await self.conn.commit()
+
+# Создаем глобальный объект, но НЕ подключаемся сразу
 db = Database()

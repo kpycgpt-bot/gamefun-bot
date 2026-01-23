@@ -15,11 +15,12 @@ class Levels(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot: return
-        
         if self.get_ratelimit(message): return 
 
         xp_gain = random.randint(5, 15)
-        user_data = db.get_user(message.author.id)
+        
+        # 🔥 await получения данных
+        user_data = await db.get_user(message.author.id)
         
         current_xp = user_data['xp'] + xp_gain
         current_level = user_data['level']
@@ -29,7 +30,8 @@ class Levels(commands.Cog):
             current_xp -= xp_needed
             current_level += 1
             
-            db.update_user(message.author.id, xp=current_xp, level=current_level)
+            # 🔥 await обновления
+            await db.update_user(message.author.id, xp=current_xp, level=current_level)
             
             embed = discord.Embed(
                 title="🎉 ПОВЫШЕНИЕ УРОВНЯ!",
@@ -37,17 +39,18 @@ class Levels(commands.Cog):
                 color=discord.Color.gold()
             )
             reward = current_level * 50
-            db.add_coins(message.author.id, reward)
+            await db.add_coins(message.author.id, reward)
             embed.set_footer(text=f"Бонус: +{reward} монет")
             
             await message.channel.send(embed=embed)
         else:
-            db.update_user(message.author.id, xp=current_xp)
+            await db.update_user(message.author.id, xp=current_xp)
 
     @commands.command(name="rank", aliases=["lvl", "level"])
     async def rank(self, ctx, member: discord.Member = None):
         member = member or ctx.author
-        user = db.get_user(member.id)
+        # 🔥 await
+        user = await db.get_user(member.id)
         
         xp_now = user['xp']
         lvl_now = user['level']
@@ -64,31 +67,26 @@ class Levels(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    # 🔥 РАБОЧАЯ ТАБЛИЦА ЛИДЕРОВ 🔥
     @commands.command(name="top", aliases=["leaderboard", "lb"])
     async def leaderboard(self, ctx):
-        top_users = db.get_top_users(10) # Берем топ 10
+        # 🔥 await получения топа
+        top_users = await db.get_top_users(10)
         
         if not top_users:
             return await ctx.send("❌ База данных пуста.")
 
         embed = discord.Embed(title="🏆 ТОП-10 ИГРОКОВ", color=discord.Color.gold())
         description = ""
-        
         medals = ["🥇", "🥈", "🥉"]
         
         for i, (user_id, level, xp) in enumerate(top_users):
-            # Пытаемся найти имя пользователя на сервере
             member = ctx.guild.get_member(user_id)
             name = member.display_name if member else f"ID: {user_id}"
             
-            # Медальки для топ-3
             prefix = medals[i] if i < 3 else f"**#{i+1}**"
-            
             description += f"{prefix} **{name}** — Ур. {level} ({xp} XP)\n"
 
         embed.description = description
-        embed.set_footer(text="Играй и общайся, чтобы попасть сюда!")
         await ctx.send(embed=embed)
 
 async def setup(bot):
