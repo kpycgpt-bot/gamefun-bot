@@ -1,112 +1,120 @@
 import discord
-from discord.ext import commands
-import asyncio
+from discord.ext import commands, tasks
 import random
-import json
 from database import db
+from utils import EmbedBuilder
+from config import Config
+import logging
 
-class PersistentChestView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🖐️ Участвовать", style=discord.ButtonStyle.success, emoji="💰", custom_id="chest_join_btn")
-    async def join_chest(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            # 🔥 await
-            event_data = await db.get_event(interaction.message.id)
-            
-            if not event_data:
-                button.disabled = True
-                button.label = "❌ Истек"
-                await interaction.response.edit_message(view=self)
-                return await interaction.followup.send("⏳ Этот сундук уже пуст или истек!", ephemeral=True)
-
-            msg_id, ch_id, reward, required, users_json = event_data
-            users_list = json.loads(users_json)
-
-            if interaction.user.id in users_list:
-                return await interaction.response.send_message("⚠️ Ты уже записан!", ephemeral=True)
-
-            users_list.append(interaction.user.id)
-            # 🔥 await
-            await db.update_event_users(msg_id, users_list)
-
-            current = len(users_list)
-            remaining = required - current
-
-            if current >= required:
-                for uid in users_list:
-                    # 🔥 await
-                    await db.add_coins(uid, reward)
-                
-                await db.delete_event(msg_id)
-                
-                embed = interaction.message.embeds[0]
-                embed.color = discord.Color.green()
-                embed.title = "✅ СУНДУК ОТКРЫТ!"
-                embed.description = f"🎉 **{current}** участников получили по **{reward}** монет!"
-                
-                button.disabled = True
-                button.label = f"💰 Открыто ({current}/{required})"
-                await interaction.response.edit_message(embed=embed, view=self)
-                await interaction.channel.send(f"🎉 **СУНДУК ОТКРЫТ!** Все получили по {reward} монет!")
-            
-            else:
-                button.label = f"🖐️ Участвовать ({current}/{required})"
-                await interaction.response.edit_message(view=self)
-                await interaction.followup.send(f"✅ Ты записан! Нужно еще {remaining} чел.", ephemeral=True)
-        
-        except Exception as e:
-            print(f"[Chest Error] {e}")
-            await interaction.response.send_message(f"❌ **Ошибка:** `{e}`", ephemeral=True)
+logger = logging.getLogger('DiscordBot.RandomEvents')
 
 class RandomEvents(commands.Cog):
+    """Система случайных событий"""
+    
     def __init__(self, bot):
         self.bot = bot
-        self.event_loop_task = None
-        self.bot.add_view(PersistentChestView())
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if not self.event_loop_task:
-            self.event_loop_task = self.bot.loop.create_task(self.event_loop())
-
-    async def event_loop(self):
+        self.random_events.start()
+        logger.info("✅ RandomEvents инициализирован")
+    
+    def cog_unload(self):
+        self.random_events.cancel()
+    
+    @tasks.loop(hours=6)
+    async def random_events(self):
+        """Случайное событие каждые 6 часов"""
+        try:
+            # Выбираем случайное событие
+            event_type = random.choice(['airdrop', 'bonus', 'rain'])
+            
+            for guild in self.bot.guilds:
+                # Находим общий канал
+                general = discord.utils.get(guild.text_channels, name='general') or guild.text_channels[0]
+                
+                if event_type == 'airdrop':
+                    await self.airdrop_event(general)
+                elif event_type == 'bonus':
+                    await self.bonus_event(general)
+                elif event_type == 'rain':
+                    await self.rain_event(general)
+            
+            logger.info(f"Случайное событие: {event_type}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка случайного события: {e}", exc_info=True)
+    
+    @random_events.before_loop
+    async def before_random_events(self):
         await self.bot.wait_until_ready()
-        while not self.bot.is_closed():
-            wait_seconds = random.randint(3600, 10800)
-            await asyncio.sleep(wait_seconds)
-            await self.spawn_random_chest()
-
-    async def spawn_random_chest(self, channel=None):
-        if not channel:
-            channel = discord.utils.get(self.bot.get_all_channels(), name="🎉・ивенты") or \
-                      discord.utils.get(self.bot.get_all_channels(), name="🎉-ивенты")
-        if not channel: return
-
-        required = random.randint(2, 6)
-        reward = random.randint(50, 150)
-
+    
+    async def airdrop_event(self, channel):
+        """Событие: Airdrop монет"""
+        amount = random.randint(100, 500)
+        
         embed = discord.Embed(
-            title="🎁 СЛУЧАЙНЫЙ СУНДУК",
-            description=f"Нужно собрать **{required}** человек!\nНаграда: **{reward} монет**",
-            color=discord.Color.gold()
+            title="🎁 AIRDROP!",
+            description=f"Первый кто напишет `claim` получит **{amount}** {Config.EMOJI_COIN}!",
+            color=Config.COLOR_SUCCESS
         )
-        embed.set_image(url="https://media.tenor.com/J3i5eC5T458AAAAC/treasure-chest.gif")
-
-        msg = await channel.send(embed=embed, view=PersistentChestView())
+        
+        await channel.send(embed=embed)
+        
+        def check(m):
+            return m.channel == channel and m.content.lower() == 'claim' and not m.author.bot
         
         try:
-            # 🔥 await
-            await db.create_event(msg.id, channel.id, reward, required)
-        except Exception as e:
-            await channel.send(f"⚠️ Ошибка базы данных: `{e}`")
-
-    @commands.command(name="testevent")
-    @commands.has_permissions(administrator=True)
-    async def force_event(self, ctx):
-        await ctx.message.delete()
-        await self.spawn_random_chest(ctx.channel)
+            msg = await self.bot.wait_for('message', check=check, timeout=60)
+            await db.add_coins(msg.author.id, amount)
+            
+            embed = EmbedBuilder.success(
+                "Поздравляем!",
+                f"{msg.author.mention} получил **{amount}** {Config.EMOJI_COIN}!"
+            )
+            await channel.send(embed=embed)
+            
+        except:
+            embed = EmbedBuilder.info("Время вышло", "Никто не забрал airdrop 😢")
+            await channel.send(embed=embed)
+    
+    async def bonus_event(self, channel):
+        """Бонус XP для всех онлайн"""
+        bonus_xp = random.randint(50, 150)
+        
+        online_members = [m for m in channel.guild.members if m.status != discord.Status.offline and not m.bot]
+        
+        for member in online_members:
+            await db.add_xp(member.id, bonus_xp)
+        
+        embed = discord.Embed(
+            title="⭐ БОНУС XP!",
+            description=f"Все онлайн пользователи получили **+{bonus_xp}** XP!",
+            color=Config.COLOR_SUCCESS
+        )
+        await channel.send(embed=embed)
+    
+    async def rain_event(self, channel):
+        """Дождь монет"""
+        total_amount = random.randint(1000, 5000)
+        
+        active_members = [
+            m for m in channel.guild.members
+            if not m.bot and m.status != discord.Status.offline
+        ][:10]  # Максимум 10 человек
+        
+        if not active_members:
+            return
+        
+        per_person = total_amount // len(active_members)
+        
+        for member in active_members:
+            await db.add_coins(member.id, per_person)
+        
+        embed = discord.Embed(
+            title="🌧️ ДОЖДЬ МОНЕТ!",
+            description=f"**{len(active_members)}** активных пользователей получили по **{per_person}** {Config.EMOJI_COIN}!",
+            color=Config.COLOR_SUCCESS
+        )
+        
+        await channel.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(RandomEvents(bot))
